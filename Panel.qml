@@ -447,9 +447,23 @@ Panel {
     ? Math.round((connectedWifiNetwork.signalStrength || 0) * 100)
     : -1
 
+  // Clipboard writes go through wl-copy's stdin: an argument would show the
+  // text to any account that can read process command lines.
+  property string clipboardText: ""
+  function copyText(text) {
+    clipboardText = String(text || "")
+    clipboardProc.stdinEnabled = true
+    clipboardProc.running = true
+  }
+  Process {
+    id: clipboardProc
+    command: ["wl-copy"]
+    onStarted: { write(root.clipboardText); stdinEnabled = false; root.clipboardText = "" }
+  }
+
   function copyToClipboard(value) {
     if (!value || !root.bar) return
-    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(value) + " | wl-copy"])
+    copyText(value)
   }
 
   readonly property string icon: Model.connectionIcon(kind, signalStrength)
