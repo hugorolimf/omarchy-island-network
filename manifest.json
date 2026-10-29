@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.hugorolimf.network",
+  "name": "Island Network",
+  "version": "1.0.0",
+  "author": "Hugo Rolim Filho",
+  "license": "MIT",
+  "homepage": "https://github.com/hugorolimf/omarchy-island-network",
+  "description": "Wi-Fi list and connection state, in the Island look (stroke icons, anatomy panel), in English or Portuguese",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Island Network",
+    "description": "Wi-Fi list and connection state",
+    "category": "Network",
+    "allowMultiple": false
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.network"
+  }
+}
