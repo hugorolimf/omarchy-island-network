@@ -18,7 +18,8 @@ Wi‑Fi list, connection state, DNS provider and Wi‑Fi band, drawn with thin s
 - 🔒 **Enterprise Wi‑Fi that checks the server.** For WPA‑Enterprise (PEAP) it asks for
   the server's domain (filled in from your identity) and only connects when the server's
   certificate is signed by a system CA and matches it, so a fake access point can't
-  collect your login. Networks behind a private CA: import its certificate with
+  collect your login. A saved profile without those checks asks for them before it
+  reconnects, then gets replaced. Networks behind a private CA: import its certificate with
   `nm-connection-editor`.
 - 🔄 **Drop-in.** It's Omarchy's own `omarchy.network` underneath (same behaviour, same
   shortcuts and IPC): enabling it takes the original's place on the bar.

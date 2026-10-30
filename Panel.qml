@@ -433,7 +433,7 @@ Panel {
     // would otherwise tear down whatever is connected now instead.
     if (net.connected) { disconnectRow(net.ssid); return }
     if (requiresCredentials(net.security) && !net.known) { openPasswordPrompt(net.ssid); return }
-    connectDirectly(net.ssid)
+    connectSaved(net)
   }
 
   // Bar pill state, derived from the native NetworkManager service so the
@@ -802,6 +802,36 @@ Panel {
 
   function connectDirectly(ssid) {
     runNetworkAction("connect", networkForSsid(ssid), function(network) { network.connect() })
+  }
+
+  // A known or open network connects as it is, except an enterprise one: its
+  // saved profile must authenticate the server first (see Model).
+  function connectSaved(net) {
+    if (net.security !== WifiSecurityType.Wpa2Eap && net.security !== WifiSecurityType.WpaEap) {
+      connectDirectly(net.ssid)
+      return
+    }
+    if (actionKind !== "" || enterpriseCheck.running) return
+    unverifiedSsid = ""
+    enterpriseCheck.ssid = net.ssid
+    enterpriseCheck.command = ["bash", "-c", Model.enterpriseProfileCheckScript, "nmcli-eap-check", net.ssid]
+    enterpriseCheck.running = true
+  }
+
+  // Fails closed: any exit but 0 asks for the server, and connecting from there
+  // replaces the profile with one that checks it.
+  property string unverifiedSsid: ""
+  Process {
+    id: enterpriseCheck
+    property string ssid: ""
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.connectDirectly(ssid)
+        return
+      }
+      root.unverifiedSsid = ssid
+      root.openPasswordPrompt(ssid)
+    }
   }
 
   function connectWithPassphrase(ssid, passphrase) {
@@ -1743,7 +1773,7 @@ Panel {
 
     readonly property string statusText: {
       if (!net) return ""
-      if (isPasswordOpen) return ""
+      if (isPasswordOpen) return root.unverifiedSsid === net.ssid ? Strings.T("Confirme o servidor para reconectar") : ""
       if (isBusy && root.actionKind === "connect") return Strings.T("Conectando…")
       if (isBusy && root.actionKind === "disconnect") return Strings.T("Desconectando…")
       if (isBusy && root.actionKind === "forget") return Strings.T("Esquecendo…")
@@ -1795,7 +1825,7 @@ Panel {
           root.openPasswordPrompt(row.net.ssid)
           return
         }
-        root.connectDirectly(row.net.ssid)
+        root.connectSaved(row.net)
       }
     }
 

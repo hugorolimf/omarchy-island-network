@@ -318,6 +318,25 @@ function canForgetNetwork(network) {
   return !!(network && network.known && !network.connected)
 }
 
+// The saved profiles of the SSID given as argument, by UUID. nmcli escapes
+// colons in -g output unless told not to, and an SSID may contain them.
+var ssidProfilesFunction =
+  "profiles() { for p in $(nmcli -g UUID,TYPE connection show | awk -F: '$2==\"802-11-wireless\"{print $1}'); do" +
+  " [ \"$(nmcli -e no -g 802-11-wireless.ssid connection show uuid \"$p\")\" = \"$1\" ] && echo \"$p\"; done; };"
+
+// Exits 0 only when the SSID ($1) has saved profiles and all of them
+// authenticate the server: a CA to chain to and a domain to match. A profile
+// saved by an older version of this plugin, or outside it, may have neither,
+// and reconnecting it would hand the MSCHAPv2 exchange to any access point
+// that answers for the SSID.
+var enterpriseProfileCheckScript = ssidProfilesFunction +
+  " found=; for u in $(profiles \"$1\"); do found=1;" +
+  " [ \"$(nmcli -g 802-1x.system-ca-certs connection show uuid \"$u\")\" = yes ]" +
+  " || [ -n \"$(nmcli -g 802-1x.ca-cert connection show uuid \"$u\")\" ] || exit 1;" +
+  " [ -n \"$(nmcli -g 802-1x.domain-suffix-match connection show uuid \"$u\")\" ]" +
+  " || [ -n \"$(nmcli -g 802-1x.domain-match connection show uuid \"$u\")\" ] || exit 1;" +
+  " done; [ -n \"$found\" ]"
+
 // The password arrives on stdin and reaches nmcli through the scriptable
 // `connection edit` editor -- argv is world-readable in /proc, so the secret
 // must never be an argument (printf is a bash builtin, so no process spawns
@@ -325,15 +344,18 @@ function canForgetNetwork(network) {
 //
 // The server is always authenticated: its certificate must chain to a system
 // CA and name the domain the user gave ($3). Without that, NetworkManager hands
-// the MSCHAPv2 exchange to any access point that answers for the SSID.
-var enterpriseConnectScript =
-  "[ -n \"$3\" ] || exit 1; u=$(uuidgen); IFS= read -r pw;" +
+// the MSCHAPv2 exchange to any access point that answers for the SSID. Once it
+// connects, the profiles it replaces go away, so none of them can auto-connect
+// without that check.
+var enterpriseConnectScript = ssidProfilesFunction +
+  " [ -n \"$3\" ] || exit 1; u=$(uuidgen); IFS= read -r pw;" +
   " nmcli connection add type wifi con-name \"$1\" ssid \"$1\" connection.uuid \"$u\"" +
   " wifi-sec.key-mgmt wpa-eap 802-1x.eap peap 802-1x.phase2-auth mschapv2" +
   " 802-1x.system-ca-certs yes 802-1x.domain-suffix-match \"$3\"" +
   " 802-1x.identity \"$2\" 802-1x.auth-timeout 8 >/dev/null" +
   " && printf 'set 802-1x.password %s\\nsave\\nquit\\n' \"$pw\" | nmcli connection edit uuid \"$u\" >/dev/null" +
   " && nmcli connection up uuid \"$u\"" +
+  " && { for o in $(profiles \"$1\"); do [ \"$o\" = \"$u\" ] || nmcli connection delete uuid \"$o\" >/dev/null 2>&1; done; true; }" +
   " || { nmcli connection delete uuid \"$u\" >/dev/null 2>&1; false; }"
 
 // The authentication server's domain, guessed from the identity
@@ -393,6 +415,7 @@ if (typeof module !== "undefined") {
     wifiSectionTitle: wifiSectionTitle,
     requiresCredentials: requiresCredentials,
     canForgetNetwork: canForgetNetwork,
+    enterpriseProfileCheckScript: enterpriseProfileCheckScript,
     enterpriseConnectScript: enterpriseConnectScript,
     networkFailureReason: networkFailureReason,
     shouldRepromptPassphrase: shouldRepromptPassphrase

@@ -57,6 +57,7 @@ var en = {
  "Esquecer rede": "Forget network",
  "Oculta": "Hidden",
  "Identidade (usuario@dominio)": "Identity (user@domain)",
+ "Confirme o servidor para reconectar": "Confirm the server to reconnect",
  "Servidor (ex.: radius.empresa.com)": "Server (e.g. radius.example.com)",
  "Senha": "Passphrase",
  "Conectar": "Connect",
