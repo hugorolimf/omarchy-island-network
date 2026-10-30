@@ -61,7 +61,18 @@ var en = {
  "Senha": "Passphrase",
  "Conectar": "Connect",
  "Copiar": "Copy to clipboard",
- "2,4 GHz": "2.4 GHz"
+ "2,4 GHz": "2.4 GHz",
+ "LIGADO": "ON",
+ "DESLIGADO": "OFF",
+ "Desligado; a internet vem pelo cabo.": "Off; the internet comes through the cable.",
+ "Desligado: sem internet sem fio.": "Off: no wireless internet.",
+ "Conectando a ": "Connecting to ",
+ "Conectado a ": "Connected to ",
+ ", sinal forte.": ", strong signal.",
+ ", sinal médio.": ", fair signal.",
+ ", sinal fraco.": ", weak signal.",
+ "Ligado; a internet vem pelo cabo.": "On; the internet comes through the cable.",
+ "Ligado, sem rede: escolha uma abaixo.": "On, no network: pick one below."
 }
 
 function T(s) { return english && en[s] !== undefined ? en[s] : s }

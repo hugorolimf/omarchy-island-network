@@ -445,6 +445,8 @@ Panel {
     if (connectedWifiNetwork) return "wifi"
     return "disconnected"
   }
+  // for Island Bar: Wi-Fi switched off (red and slashed) vs. joined to nothing
+  readonly property bool wifiEnabled: Networking.wifiEnabled
   readonly property int signalStrength: connectedWifiNetwork
     ? Math.round((connectedWifiNetwork.signalStrength || 0) * 100)
     : -1
@@ -1017,6 +1019,11 @@ Panel {
   // outside-click via an overlay MouseArea + Region mask that lets the bar
   // remain clickable, fade animation, popout coordination). What stays
   // here is the wifi-specific UI inside.
+  // the panel's height follows its content smoothly while open (networks
+  // found, details arriving, the radio switched)
+  property real panelHeight: column.implicitHeight
+  Behavior on panelHeight { enabled: root.opened; NumberAnimation { duration: 280; easing.type: Easing.Bezier; easing.bezierCurve: Anatomy.ease } }
+
   KeyboardPanel {
     id: panel
     anchorItem: button
@@ -1025,7 +1032,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+    contentHeight: panel.fittedContentHeight(root.panelHeight)
 
     // Catches all unhandled keys for keyboard navigation. AfterItem priority
     // lets the passphrase TextField (a child via focus chain) get its keys
@@ -1157,7 +1164,7 @@ Panel {
         }
 
         // Sharing belongs to the connected-network hero rather than the scan
-        // result row. The radio switch remains beside it as the other hero action.
+        // result row. The radio switch is the Wi-Fi row below the hero.
         RowLayout {
           id: heroActions
           spacing: Style.space(8)
@@ -1184,23 +1191,6 @@ Panel {
             Layout.alignment: Qt.AlignVCenter
             onHovered: function(on) { if (on) root.setHeaderCursor(root.speedHeaderIndex) }
             onClicked: root.summonSpeedTest()
-          }
-
-          ToggleSwitch {
-            id: powerSwitch
-            visible: root.canToggleWifi
-            checked: Networking.wifiEnabled
-            hasCursor: root.toggleHeaderHasCursor
-            foreground: root.bar.foreground
-            Layout.alignment: Qt.AlignVCenter
-            onHovered: function(on) { if (on) root.setHeaderCursor(root.toggleHeaderIndex) }
-            onToggled: root.toggleNetwork()
-
-            PanelToolTip {
-              visible: powerSwitch.containsMouse
-              text: root.toggleHint
-              fontFamily: Anatomy.sans
-            }
           }
         }
 
@@ -1259,6 +1249,44 @@ Panel {
           }
         }
 
+      }
+
+      // Wi-Fi on or off, said in words, with what it means right now. The
+      // whole row is the switch (the header's last cursor stop); off with no
+      // cable it turns red, on with no network it waits in amber.
+      StateHero {
+        id: wifiRow
+        readonly property bool on: Networking.wifiEnabled
+        readonly property int sig: root.kind === "wifi" ? Math.max(0, root.signalStrength) : 0
+        readonly property bool joining: root.actionKind === "connect" && root.actionSsid !== ""
+        visible: root.canToggleWifi
+        width: parent.width
+        title: "Wi-Fi"
+        stateText: on ? Strings.T("LIGADO") : Strings.T("DESLIGADO")
+        detail: {
+          if (!on) return root.kind === "ethernet" ? Strings.T("Desligado; a internet vem pelo cabo.") : Strings.T("Desligado: sem internet sem fio.")
+          if (joining) return Strings.T("Conectando a ") + root.actionSsid + "…"
+          if (root.kind === "wifi") {
+            var name = root.connectedWifiNetwork && root.connectedWifiNetwork.name ? root.connectedWifiNetwork.name : (root.info.ssid || "Wi-Fi")
+            return Strings.T("Conectado a ") + name + (sig >= 67 ? Strings.T(", sinal forte.") : sig >= 34 ? Strings.T(", sinal médio.") : Strings.T(", sinal fraco."))
+          }
+          if (root.kind === "ethernet") return Strings.T("Ligado; a internet vem pelo cabo.")
+          return Strings.T("Ligado, sem rede: escolha uma abaixo.")
+        }
+        tooltip: root.toggleHint
+        iconPath: Anatomy.icons.wifi1 + Anatomy.icons.wifiDot
+        layers: [
+          { d: Anatomy.icons.wifi2, a: on && (root.kind !== "wifi" || sig >= 34) ? 1 : 0.3 },
+          { d: Anatomy.icons.wifi3, a: on && (root.kind !== "wifi" || sig >= 67) ? 1 : 0.3 }
+        ]
+        iconColor: on ? Anatomy.hi : Anatomy.mid
+        marked: !on
+        checked: on
+        alert: (!on && root.kind !== "ethernet") || (on && root.kind === "disconnected" && !joining)
+        tone: on ? Anatomy.amber : Anatomy.red
+        hasCursor: root.toggleHeaderHasCursor
+        onHovered: function(isHovered) { if (isHovered) root.setHeaderCursor(root.toggleHeaderIndex) }
+        onToggled: root.toggleNetwork()
       }
 
       // Connection details: transfer metrics first, then IP/Gateway.
