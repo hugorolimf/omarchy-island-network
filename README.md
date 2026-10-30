@@ -23,6 +23,15 @@ Wi‑Fi list, connection state, DNS provider and Wi‑Fi band, drawn with thin s
 - 🔄 **Drop-in.** It's Omarchy's own `omarchy.network` underneath (same behaviour, same
   shortcuts and IPC): enabling it takes the original's place on the bar.
 
+## See it
+
+Recorded on a real desktop, mouse included. The panel follows the system language;
+this take is in Portuguese.
+
+**Connection, live traffic, DNS and the networks around**, opened from the bar.
+
+![Network panel](assets/network.gif)
+
 ## Requirements
 
 [Island Kit](https://github.com/hugorolimf/omarchy-island-kit): the panel is drawn with it.
