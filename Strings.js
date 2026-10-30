@@ -57,6 +57,7 @@ var en = {
  "Esquecer rede": "Forget network",
  "Oculta": "Hidden",
  "Identidade (usuario@dominio)": "Identity (user@domain)",
+ "Servidor (ex.: radius.empresa.com)": "Server (e.g. radius.example.com)",
  "Senha": "Passphrase",
  "Conectar": "Connect",
  "Copiar": "Copy to clipboard",

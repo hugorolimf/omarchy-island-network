@@ -322,14 +322,26 @@ function canForgetNetwork(network) {
 // `connection edit` editor -- argv is world-readable in /proc, so the secret
 // must never be an argument (printf is a bash builtin, so no process spawns
 // with it either).
+//
+// The server is always authenticated: its certificate must chain to a system
+// CA and name the domain the user gave ($3). Without that, NetworkManager hands
+// the MSCHAPv2 exchange to any access point that answers for the SSID.
 var enterpriseConnectScript =
-  "u=$(uuidgen); IFS= read -r pw;" +
+  "[ -n \"$3\" ] || exit 1; u=$(uuidgen); IFS= read -r pw;" +
   " nmcli connection add type wifi con-name \"$1\" ssid \"$1\" connection.uuid \"$u\"" +
   " wifi-sec.key-mgmt wpa-eap 802-1x.eap peap 802-1x.phase2-auth mschapv2" +
+  " 802-1x.system-ca-certs yes 802-1x.domain-suffix-match \"$3\"" +
   " 802-1x.identity \"$2\" 802-1x.auth-timeout 8 >/dev/null" +
   " && printf 'set 802-1x.password %s\\nsave\\nquit\\n' \"$pw\" | nmcli connection edit uuid \"$u\" >/dev/null" +
   " && nmcli connection up uuid \"$u\"" +
   " || { nmcli connection delete uuid \"$u\" >/dev/null 2>&1; false; }"
+
+// The authentication server's domain, guessed from the identity
+// ("ana@corp.example" -> "corp.example") so the field starts filled in.
+function serverDomainFor(identity) {
+  var at = String(identity || "").lastIndexOf("@")
+  return at >= 0 ? String(identity).slice(at + 1).trim() : ""
+}
 
 function networkFailureReason(reason, needsCredentials, reasons) {
   var r = reasons || {}
@@ -356,6 +368,7 @@ function shouldRepromptPassphrase(reason, needsCredentials, reasons) {
 if (typeof module !== "undefined") {
   module.exports = {
     parseNetworkStatus: parseNetworkStatus,
+    serverDomainFor: serverDomainFor,
     decimal: decimal,
     wifiIconFor: wifiIconFor,
     connectionIcon: connectionIcon,

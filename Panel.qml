@@ -28,6 +28,7 @@ Panel {
     passwordSsid = ""
     passwordText = ""
     identityText = ""
+    domainText = ""
   }
 
   // Live connection details from `ip` / /sys / iw.
@@ -99,6 +100,7 @@ Panel {
   property string passwordSsid: ""
   property string passwordText: ""
   property string identityText: ""
+  property string domainText: ""
 
   // ConnectionFailReason values as a plain object, so Model.js helpers stay
   // pure JS and Node-testable.
@@ -727,6 +729,7 @@ Panel {
     if (passwordSsid !== ssid) {
       passwordText = ""
       identityText = ""
+      domainText = ""
     }
     passwordSsid = ssid
   }
@@ -803,10 +806,10 @@ Panel {
     runNetworkAction("connect", networkForSsid(ssid), function(network) { network.connectWithPsk(passphrase) })
   }
 
-  function connectEnterprise(ssid, identity, passphrase) {
+  function connectEnterprise(ssid, identity, domain, passphrase) {
     runNetworkAction("connect", networkForSsid(ssid), function(network) {
       enterpriseConnect.secret = passphrase
-      enterpriseConnect.command = ["bash", "-c", Model.enterpriseConnectScript, "nmcli-eap", ssid, identity]
+      enterpriseConnect.command = ["bash", "-c", Model.enterpriseConnectScript, "nmcli-eap", ssid, identity, domain]
       enterpriseConnect.running = true
     })
   }
@@ -1685,7 +1688,8 @@ Panel {
     function submitCredentials() {
       if (!net || root.busy || root.passwordText.length === 0) return
       if (!isEnterprise) return root.connectWithPassphrase(net.ssid, root.passwordText)
-      if (root.identityText.length > 0) root.connectEnterprise(net.ssid, root.identityText, root.passwordText)
+      if (root.identityText.length > 0 && root.domainText.trim().length > 0)
+        root.connectEnterprise(net.ssid, root.identityText, root.domainText.trim(), root.passwordText)
     }
 
     Connections {
@@ -1910,7 +1914,7 @@ Panel {
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)
       anchors.topMargin: Style.space(4)
-      implicitHeight: (idField.visible ? idField.implicitHeight + Style.space(4) : 0) + pwField.implicitHeight + Style.spacing.rowGap
+      implicitHeight: (idField.visible ? idField.implicitHeight + domainField.implicitHeight + Style.space(8) : 0) + pwField.implicitHeight + Style.spacing.rowGap
       height: implicitHeight
 
       TextField {
@@ -1929,12 +1933,41 @@ Panel {
         enabled: !row.isBusy
         text: row.isPasswordOpen ? root.identityText : ""
 
-        onAccepted: pwField.forceActiveFocus()
-        onTextChanged: if (row.isPasswordOpen && text !== root.identityText) root.identityText = text
+        onAccepted: domainField.forceActiveFocus()
+        onTextChanged: {
+          if (!row.isPasswordOpen || text === root.identityText) return
+          // Keep the server in step with the identity's domain until the
+          // user types a server of their own.
+          if (root.domainText === Model.serverDomainFor(root.identityText)) root.domainText = Model.serverDomainFor(text)
+          root.identityText = text
+        }
         Keys.onEscapePressed: root.cancelPasswordPrompt()
 
         onVisibleChanged: if (visible) Qt.callLater(forceActiveFocus)
         Component.onCompleted: if (visible) Qt.callLater(forceActiveFocus)
+      }
+
+      // The authentication server's domain: its certificate must match it.
+      TextField {
+        id: domainField
+        visible: idField.visible
+        anchors.left: parent.left
+        anchors.right: connectPwBtn.left
+        anchors.top: idField.bottom
+        anchors.topMargin: Style.space(4)
+        anchors.rightMargin: Style.space(6)
+        placeholderText: Strings.T("Servidor (ex.: radius.empresa.com)")
+        font.family: Anatomy.sans
+        font.pixelSize: Style.font.body
+        foreground: Anatomy.strong
+        horizontalPadding: Style.spacing.controlGap
+        verticalPadding: Style.spacing.controlPaddingY
+        enabled: !row.isBusy
+        text: row.isPasswordOpen ? root.domainText : ""
+
+        onAccepted: pwField.forceActiveFocus()
+        onTextChanged: if (row.isPasswordOpen && text !== root.domainText) root.domainText = text
+        Keys.onEscapePressed: root.cancelPasswordPrompt()
       }
 
       TextField {
@@ -1996,7 +2029,7 @@ Panel {
         visible: !row.isBusy && !row.isFailed
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        enabled: row.net && pwField.text.length > 0 && (!row.isEnterprise || idField.text.length > 0)
+        enabled: row.net && pwField.text.length > 0 && (!row.isEnterprise || (idField.text.length > 0 && domainField.text.trim().length > 0))
         tooltipText: Strings.T("Conectar")
         foreground: Anatomy.hi
         fontFamily: Anatomy.sans
