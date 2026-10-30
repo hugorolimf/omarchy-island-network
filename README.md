@@ -20,7 +20,8 @@ Wi‑Fi list, connection state, DNS provider and Wi‑Fi band, drawn with thin s
   certificate is signed by a system CA and matches it, so a fake access point can't
   collect your login. A saved profile without those checks asks for them before it
   reconnects, then gets replaced. Networks behind a private CA: import its certificate with
-  `nm-connection-editor`.
+  `nm-connection-editor`. See [Enterprise Wi‑Fi profiles](#enterprise-wi-fi-profiles)
+  for what it changes in NetworkManager.
 - 🔄 **Drop-in.** It's Omarchy's own `omarchy.network` underneath (same behaviour, same
   shortcuts and IPC): enabling it takes the original's place on the bar.
 
@@ -47,6 +48,26 @@ restarts the shell.
 omarchy plugin add https://github.com/hugorolimf/omarchy-island-kit --enable
 omarchy plugin add https://github.com/hugorolimf/omarchy-island-network --enable
 ```
+
+## Enterprise Wi‑Fi profiles
+
+Everything the panel does to NetworkManager profiles, all of it on enterprise
+(802.1X) Wi‑Fi:
+
+- **Reconnecting from the panel** first checks the network's saved profiles. A saved
+  802.1X profile without a CA and a server domain is never started from the panel: on
+  WPA/WPA2‑Enterprise it asks for the server and, once that connects, deletes the
+  profiles it replaces (the SSID's 802.1X profiles that don't check the server; others
+  stay). If the new one doesn't connect, it is removed and the old ones stay as they were.
+- **Profiles saved by the earlier setup** (this plugin before 1.0.2, and Omarchy's own
+  network panel) check no server: PEAP/MSCHAPv2, auth timeout 8 s, named after the
+  SSID, no CA, no domain. NetworkManager would auto-connect them on its own, so when
+  the plugin loads it turns their auto-connect off (`connection.autoconnect no`) and, if
+  one is connected at that moment, disconnects it, then says so in a notification. That
+  setting is the only change; the profile and its password stay. Profiles of any other
+  shape are left alone.
+- To undo it for a network you trust as it is:
+  `nmcli connection modify "<network>" connection.autoconnect yes`.
 
 ## Remove
 

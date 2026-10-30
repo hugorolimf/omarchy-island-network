@@ -804,33 +804,42 @@ Panel {
     runNetworkAction("connect", networkForSsid(ssid), function(network) { network.connect() })
   }
 
-  // A known or open network connects as it is, except an enterprise one: its
-  // saved profile must authenticate the server first (see Model).
+  // Every saved network is checked before it reconnects, whatever security
+  // its access point advertises: a saved 802.1X profile that does not
+  // authenticate the server is never started from here (see Model).
   function connectSaved(net) {
-    if (net.security !== WifiSecurityType.Wpa2Eap && net.security !== WifiSecurityType.WpaEap) {
-      connectDirectly(net.ssid)
-      return
-    }
     if (actionKind !== "" || enterpriseCheck.running) return
     unverifiedSsid = ""
     enterpriseCheck.ssid = net.ssid
+    enterpriseCheck.peap = net.security === WifiSecurityType.Wpa2Eap || net.security === WifiSecurityType.WpaEap
     enterpriseCheck.command = ["bash", "-c", Model.enterpriseProfileCheckScript, "nmcli-eap-check", net.ssid]
     enterpriseCheck.running = true
   }
 
-  // Fails closed: any exit but 0 asks for the server, and connecting from there
-  // replaces the profile with one that checks it.
+  // Fails closed. Exit 1 on a WPA/WPA2-Enterprise network asks for the
+  // server, and connecting from there replaces the profile with one that
+  // checks it. Elsewhere (WPA3-Enterprise, dynamic WEP, LEAP) the panel cannot
+  // rebuild that profile, and with exit 2 the profiles could not be read: the
+  // row says why and nothing connects.
   property string unverifiedSsid: ""
+  // Networks whose saved profile the guard paused (see Entry.qml).
+  property var legacySsids: []
   Process {
     id: enterpriseCheck
     property string ssid: ""
+    property bool peap: false
     onExited: function(exitCode) {
       if (exitCode === 0) {
         root.connectDirectly(ssid)
         return
       }
-      root.unverifiedSsid = ssid
-      root.openPasswordPrompt(ssid)
+      if (exitCode === 1 && peap) {
+        root.unverifiedSsid = ssid
+        root.openPasswordPrompt(ssid)
+        return
+      }
+      root.failureSsid = ssid
+      root.failureReason = Strings.T(exitCode === 1 ? "O perfil salvo não confere o servidor" : "Não foi possível conferir o perfil salvo")
     }
   }
 
@@ -1779,6 +1788,7 @@ Panel {
       if (isBusy && root.actionKind === "forget") return Strings.T("Esquecendo…")
       if (isFailed) return root.failureReason || Strings.T("Falhou")
       if (isConnected) return Strings.T("Conectado · ") + (net.signal || 0) + "%"
+      if (root.legacySsids.indexOf(net.ssid) >= 0) return Strings.T("Confirme o servidor para reconectar")
       return ""
     }
 

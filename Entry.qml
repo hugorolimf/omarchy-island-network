@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons as Commons
 import qs.Ui
+import "Model.js" as Model
 
 // Bar entry point. The widget (or the panel it opens) is drawn with Island
 // Kit, imported by path, so without the Kit it cannot load and the plugin
@@ -94,13 +95,82 @@ BarWidget {
   onModuleNameChanged: injectInner()
   onSettingsChanged: injectInner()
 
+  // Enterprise Wi-Fi profiles saved by the earlier setup authenticate no
+  // server, and NetworkManager would auto-connect them before anyone opens
+  // the panel. The guard (Model.legacyEnterpriseGuardScript) stops that as
+  // soon as the plugin loads -- here, so it runs with or without the Kit --
+  // and again whenever the panel opens. The widget marks those networks.
+  property var legacySsids: []
+  property bool guardAgain: false
+  property var notifiedSsids: []
+  onLegacySsidsChanged: injectLegacy()
+  onOpenedChanged: if (opened === true) runGuard()
+  Component.onCompleted: runGuard()
+
+  function injectLegacy() {
+    if (inner && "legacySsids" in inner) inner.legacySsids = legacySsids
+  }
+
+  function runGuard() {
+    if (guardProc.running) { guardAgain = true; return }
+    guardProc.running = true
+  }
+
+  Process {
+    id: guardProc
+    command: ["bash", "-c", Model.legacyEnterpriseGuardScript, "nmcli-eap-guard"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.guardFinished(Model.parseGuardOutput(text))
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) console.warn(root.moduleName + ": could not check the saved enterprise Wi-Fi profiles (" + exitCode + ")")
+      if (root.guardAgain) {
+        root.guardAgain = false
+        root.runGuard()
+      }
+    }
+  }
+
+  // Says once per network what changed and how to get it back; a network
+  // that could not be paused is named too, it still auto-connects.
+  function guardFinished(result) {
+    legacySsids = result.paused.concat(result.failed)
+    var fresh = result.fresh.filter(function(ssid) { return notifiedSsids.indexOf(ssid) < 0 })
+    var failed = result.failed.filter(function(ssid) { return notifiedSsids.indexOf(ssid) < 0 })
+    notifiedSsids = notifiedSsids.concat(fresh, failed)
+    var pt = portuguese
+    if (fresh.length > 0) {
+      var down = result.down.filter(function(ssid) { return fresh.indexOf(ssid) >= 0 }).length > 0
+      notify(pt ? "Wi-Fi corporativo: conexão automática pausada" : "Enterprise Wi-Fi: auto-connect paused",
+        pt ? fresh.join(", ") + ": o perfil salvo não confere o servidor da rede, então não conecta mais sozinho"
+             + (down ? " e a conexão atual foi encerrada" : "")
+             + ". Para voltar, escolha a rede no painel de rede e informe o servidor."
+           : fresh.join(", ") + ": the saved profile doesn't check the network's server, so it no longer connects on its own"
+             + (down ? " and the current connection was closed" : "")
+             + ". To get it back, pick the network in the network panel and enter the server.")
+    }
+    if (failed.length > 0) {
+      notify(pt ? "Wi-Fi corporativo sem proteção" : "Unprotected enterprise Wi-Fi",
+        pt ? failed.join(", ") + ": o perfil salvo não confere o servidor e não foi possível pausar a conexão automática. Escolha a rede no painel de rede e informe o servidor, ou esqueça a rede."
+           : failed.join(", ") + ": the saved profile doesn't check the server and its auto-connect could not be paused. Pick the network in the network panel and enter the server, or forget the network.")
+    }
+  }
+
+  function notify(title, body) {
+    Quickshell.execDetached(["notify-send", "-a", "Island Network", "-i", "network-wireless", title, body])
+  }
+
   Loader {
     id: widgetLoader
     anchors.fill: parent
     // Only once the bar is here: widgets read root.bar while they build.
     active: root.kitPresent && !!root.bar
     source: Qt.resolvedUrl(root.widgetFile)
-    onLoaded: root.injectInner()
+    onLoaded: {
+      root.injectInner()
+      root.injectLegacy()
+    }
   }
 
   // Kit missing: add it; Kit there but the widget failed: update it. Then a

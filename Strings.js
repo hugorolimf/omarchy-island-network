@@ -58,6 +58,8 @@ var en = {
  "Oculta": "Hidden",
  "Identidade (usuario@dominio)": "Identity (user@domain)",
  "Confirme o servidor para reconectar": "Confirm the server to reconnect",
+ "O perfil salvo não confere o servidor": "The saved profile doesn't check the server",
+ "Não foi possível conferir o perfil salvo": "Couldn't check the saved profile",
  "Servidor (ex.: radius.empresa.com)": "Server (e.g. radius.example.com)",
  "Senha": "Passphrase",
  "Conectar": "Connect",
