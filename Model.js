@@ -318,115 +318,90 @@ function canForgetNetwork(network) {
   return !!(network && network.known && !network.connected)
 }
 
-// Shell helpers for the 802.1X scripts below. A profile is read once, as
-// `setting:value` lines (-t, values unescaped with -e no since an SSID may
-// hold colons), and `get` picks a setting out by name: -g by position would
-// shift, as nmcli leaves out the settings a profile does not have. LC_ALL=C
-// keeps nmcli's words (yes/no) unlocalized.
-//   load UUID   reads a profile into $s; get NAME then reads one setting of it
-//   eap         the profile logs in over 802.1X (WPA/WPA3-Enterprise, dynamic WEP, LEAP)
-//   ca, domain  it names a CA to chain to; a domain the server must match
-//   verified    both: it authenticates the server
-//   legacy      a profile exactly as the earlier enterprise setup saved it
-//               (this plugin before 1.0.2, and Omarchy's own network panel):
-//               PEAP/MSCHAPv2, auth-timeout 8, named after its SSID, no CA, no domain
-//   wifi        every saved Wi-Fi profile, by UUID
-var nmFunctions =
-  "export LC_ALL=C; set -o pipefail;" +
-  " load() { s=$(nmcli -e no -t connection show uuid \"$1\"); };" +
-  " get() { printf '%s\\n' \"$s\" | awk -v k=\"$1:\" 'index($0, k) == 1 { print substr($0, length(k) + 1); exit }'; };" +
-  " eap() { case \"$(get 802-11-wireless-security.key-mgmt)\" in wpa-eap|wpa-eap-suite-b-192|ieee8021x) ;; *) return 1;; esac; };" +
-  " ca() { [ \"$(get 802-1x.system-ca-certs)\" = yes ] || [ -n \"$(get 802-1x.ca-cert)\" ]; };" +
-  " domain() { [ -n \"$(get 802-1x.domain-suffix-match)\" ] || [ -n \"$(get 802-1x.domain-match)\" ]; };" +
-  " verified() { ca && domain; };" +
-  " legacy() { eap && ! ca && ! domain && [ \"$(get 802-1x.eap)\" = peap ] && [ \"$(get 802-1x.phase2-auth)\" = mschapv2 ]" +
-  " && [ \"$(get 802-1x.auth-timeout)\" = 8 ] && [ \"$(get connection.id)\" = \"$(get 802-11-wireless.ssid)\" ]; };" +
-  " wifi() { nmcli -g UUID,TYPE connection show | awk -F: '$2==\"802-11-wireless\"{print $1}'; };"
-
-// Run before the panel reconnects a saved network ($1), whatever security the
-// access point advertises. Exits 0 when none of the SSID's saved profiles
-// would log in over 802.1X without authenticating the server, 1 when one
-// would (reconnecting it hands the MSCHAPv2 exchange to any access point that
-// answers for the SSID), 2 when the profiles could not be read. Anything but
-// 0 means the panel does not connect.
-var enterpriseProfileCheckScript = nmFunctions +
-  " list=$(wifi) || exit 2;" +
-  " for u in $list; do load \"$u\" || exit 2; [ \"$(get 802-11-wireless.ssid)\" = \"$1\" ] || continue;" +
-  " eap && ! verified && exit 1; done; exit 0"
-
-// Run when the plugin loads and whenever the panel opens, before anyone asks
-// to connect. NetworkManager auto-connects saved profiles on its own, so a
-// legacy profile (see nmFunctions) would hand its MSCHAPv2 exchange to an
-// impersonating server without the panel ever being involved. Each one still
-// auto-connecting gets `connection.autoconnect no` and, if it is up right
-// now, is brought down; nothing else in it changes, its password included.
-// Reconnecting it from the panel then asks for the server and replaces it.
-// A profile already set not to auto-connect is left alone: if it is up, the
-// user started it on purpose. Prints one line per legacy profile:
-//   paused<TAB>SSID     paused just now
-//   down<TAB>SSID       paused just now, and the live connection brought down
-//   kept<TAB>SSID       already not auto-connecting
-//   failed<TAB>SSID     could not be changed (still auto-connects)
-// Every bar (one per screen) runs it, so runs take turns on a lock on the
-// runtime directory (no file of its own): the later ones find the profiles
-// already paused and report them as kept.
-var legacyEnterpriseGuardScript = nmFunctions +
-  " exec 9<\"${XDG_RUNTIME_DIR:-/tmp}\" && flock -w 30 9 || exit 2;" +
-  " list=$(wifi) || exit 2; active=$(nmcli -g UUID connection show --active) || exit 2;" +
-  " for u in $list; do load \"$u\" && legacy || continue; ssid=$(get 802-11-wireless.ssid);" +
-  " if [ \"$(get connection.autoconnect)\" = no ]; then printf 'kept\\t%s\\n' \"$ssid\"; continue; fi;" +
-  " if ! nmcli connection modify uuid \"$u\" connection.autoconnect no >/dev/null; then printf 'failed\\t%s\\n' \"$ssid\"; continue; fi;" +
-  " if printf '%s\\n' \"$active\" | grep -qxF \"$u\"; then nmcli connection down uuid \"$u\" >/dev/null; printf 'down\\t%s\\n' \"$ssid\";" +
-  " else printf 'paused\\t%s\\n' \"$ssid\"; fi; done; exit 0"
-
-// The guard's output as { paused: [SSIDs not auto-connecting until
-// replaced], fresh: [paused by this run], down: [brought down by this run],
-// failed: [could not be paused] }.
-function parseGuardOutput(text) {
-  var result = { paused: [], fresh: [], down: [], failed: [] }
-  var lines = String(text || "").split("\n")
-  for (var i = 0; i < lines.length; i++) {
-    var tab = lines[i].indexOf("\t")
-    if (tab < 0) continue
-    var kind = lines[i].slice(0, tab)
-    var ssid = lines[i].slice(tab + 1)
-    if (kind === "failed") { result.failed.push(ssid); continue }
-    if (kind !== "paused" && kind !== "down" && kind !== "kept") continue
-    if (result.paused.indexOf(ssid) < 0) result.paused.push(ssid)
-    if (kind === "paused" || kind === "down") result.fresh.push(ssid)
-    if (kind === "down") result.down.push(ssid)
-  }
-  return result
+// Enterprise (802.1X) Wi-Fi is set up in the system's own tool, nmtui: the panel
+// neither creates these profiles nor starts them. It connects only the types
+// listed here, so a type it doesn't know goes to nmtui too.
+function panelConnects(security, personalTypes) {
+  return personalTypes.indexOf(security) >= 0
 }
 
-// The password arrives on stdin and reaches nmcli through the scriptable
-// `connection edit` editor -- argv is world-readable in /proc, so the secret
-// must never be an argument (printf is a bash builtin, so no process spawns
-// with it either).
-//
-// The server is always authenticated: its certificate must chain to a system
-// CA and name the domain the user gave ($3). Without that, NetworkManager hands
-// the MSCHAPv2 exchange to any access point that answers for the SSID. Once it
-// connects, the SSID's 802.1X profiles that do not authenticate the server go
-// away, so none of them can connect again; its other profiles stay. If it
-// does not connect, the new profile goes and the old ones stay as they were.
-var enterpriseConnectScript = nmFunctions +
-  " [ -n \"$3\" ] || exit 1; u=$(uuidgen); IFS= read -r pw;" +
-  " nmcli connection add type wifi con-name \"$1\" ssid \"$1\" connection.uuid \"$u\"" +
-  " wifi-sec.key-mgmt wpa-eap 802-1x.eap peap 802-1x.phase2-auth mschapv2" +
-  " 802-1x.system-ca-certs yes 802-1x.domain-suffix-match \"$3\"" +
-  " 802-1x.identity \"$2\" 802-1x.auth-timeout 8 >/dev/null" +
-  " && printf 'set 802-1x.password %s\\nsave\\nquit\\n' \"$pw\" | nmcli connection edit uuid \"$u\" >/dev/null" +
-  " && nmcli connection up uuid \"$u\"" +
-  " && { for o in $(wifi); do [ \"$o\" = \"$u\" ] && continue; load \"$o\" || continue;" +
-  " [ \"$(get 802-11-wireless.ssid)\" = \"$1\" ] && eap && ! verified && nmcli connection delete uuid \"$o\" >/dev/null 2>&1; done; true; }" +
-  " || { nmcli connection delete uuid \"$u\" >/dev/null 2>&1; false; }"
+// True for what a saved profile (NMSettings.read()) says of itself. A network's
+// security type comes from whichever access point is strongest, and connecting
+// starts the saved profile, so the profile has to be personal too. Settings not
+// loaded yet count as not personal.
+function profileIsPersonal(settings) {
+  if (!settings || !settings["802-11-wireless"] || settings["802-1x"]) return false
+  var security = settings["802-11-wireless-security"]
+  if (!security) return true
+  return ["none", "owe", "wpa-psk", "sae"].indexOf(security["key-mgmt"]) >= 0
+}
 
-// The authentication server's domain, guessed from the identity
-// ("ana@corp.example" -> "corp.example") so the field starts filled in.
-function serverDomainFor(identity) {
-  var at = String(identity || "").lastIndexOf("@")
-  return at >= 0 ? String(identity).slice(at + 1).trim() : ""
+// Runs when the plugin loads, whenever the panel opens and, until it exits 0,
+// every minute (see Entry.qml). Earlier versions of this plugin saved enterprise
+// profiles that authenticate no server, and NetworkManager would auto-connect
+// them on its own, handing the MSCHAPv2 exchange to any access point answering
+// for the SSID. Each one still auto-connecting is brought down if it is up and
+// gets `connection.autoconnect no`, in that order, so a failed attempt is tried
+// again; nothing else in it changes, its password included. A profile already
+// set not to auto-connect is left alone.
+//
+// Profiles are read over D-Bus (GetSettings, which never returns secrets), as
+// typed fields with the SSID in bytes, not from nmcli's text: an SSID may hold
+// newlines, and in text it could pass for another setting. The filter matches
+// exactly what the old setup saved: PEAP/MSCHAPv2, auth-timeout 8, named after
+// its SSID, no CA, no domain. autoconnect is left out of a profile when it is on.
+//
+// Prints one JSON object per legacy profile, {"kind": ..., "ssid": ...}:
+//   paused   paused just now
+//   down     paused just now, and the live connection brought down
+//   kept     already not auto-connecting
+//   failed   could not be brought down or paused (still auto-connects)
+// Exits 0 when done, 2 when a profile could not be read, 3 when NetworkManager
+// isn't running, 4 when a profile could not be paused. Every bar (one per
+// screen) runs it, so runs take turns on a lock on the runtime directory.
+var legacyProfileFilter =
+  'def utf8: explode | map(if . < 128 then [.] elif . < 2048 then [192 + (. / 64 | floor), 128 + . % 64]' +
+  ' elif . < 65536 then [224 + (. / 4096 | floor), 128 + ((. / 64 | floor) % 64), 128 + . % 64]' +
+  ' else [240 + (. / 262144 | floor), 128 + ((. / 4096 | floor) % 64), 128 + ((. / 64 | floor) % 64), 128 + . % 64] end) | add // [];' +
+  ' .data[0] | .connection as $c | ."802-1x" as $x | ."802-11-wireless".ssid.data as $ssid' +
+  ' | ."802-11-wireless-security"."key-mgmt".data as $key' +
+  ' | select($c.type.data == "802-11-wireless" and $x != null and ($key == "wpa-eap" or $key == "wpa-eap-suite-b-192" or $key == "ieee8021x"))' +
+  ' | select($x["system-ca-certs"].data != true and (($x["ca-cert"].data // []) | length) == 0 and ($x["ca-path"].data // "") == "")' +
+  ' | select(($x["domain-suffix-match"].data // "") == "" and ($x["domain-match"].data // "") == "")' +
+  ' | select($x.eap.data == ["peap"] and $x["phase2-auth"].data == "mschapv2" and $x["auth-timeout"].data == 8)' +
+  ' | select(($c.id.data | utf8) == $ssid)' +
+  ' | "\\($c.uuid.data) \\($c.autoconnect.data != false) \\($c.id.data | tojson)"'
+
+var legacyEnterpriseGuardScript =
+  "export LC_ALL=C; set -o pipefail; nm=org.freedesktop.NetworkManager;" +
+  " up=$(busctl --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s $nm | jq -r '.data[0]') || exit 2;" +
+  " [ \"$up\" = true ] || exit 3;" +
+  " exec 9<\"${XDG_RUNTIME_DIR:-/tmp}\" && flock -w 30 9 || exit 2;" +
+  " say() { printf '{\"kind\":\"%s\",\"ssid\":%s}\\n' \"$1\" \"$name\"; };" +
+  " list=$(busctl --json=short call $nm /org/freedesktop/NetworkManager/Settings $nm.Settings ListConnections | jq -r '.data[0][]') || exit 2;" +
+  " active=$(nmcli -g UUID connection show --active) || exit 2; rc=0;" +
+  " filter='" + legacyProfileFilter + "';" +
+  " for p in $list; do" +
+  " v=$(busctl --json=short call $nm \"$p\" $nm.Settings.Connection GetSettings | jq -r \"$filter\") || { rc=2; continue; };" +
+  " [ -n \"$v\" ] || continue; read -r u auto name <<<\"$v\";" +
+  " if [ \"$auto\" = false ]; then say kept; continue; fi; k=paused;" +
+  " if printf '%s\\n' \"$active\" | grep -qxF \"$u\"; then k=down; nmcli connection down uuid \"$u\" >/dev/null || k=failed; fi;" +
+  " [ $k = failed ] || nmcli connection modify uuid \"$u\" connection.autoconnect no >/dev/null || k=failed;" +
+  " say $k; [ $k != failed ] || [ $rc = 2 ] || rc=4; done; exit $rc"
+
+// The guard's output as { fresh: [paused by this run], down: [brought down
+// by this run], failed: [could not be paused] }.
+function parseGuardOutput(text) {
+  var result = { fresh: [], down: [], failed: [] }
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var entry
+    try { entry = JSON.parse(lines[i]) } catch (e) { continue }
+    if (entry.kind === "failed") result.failed.push(entry.ssid)
+    if (entry.kind === "paused" || entry.kind === "down") result.fresh.push(entry.ssid)
+    if (entry.kind === "down") result.down.push(entry.ssid)
+  }
+  return result
 }
 
 function networkFailureReason(reason, needsCredentials, reasons) {
@@ -454,7 +429,6 @@ function shouldRepromptPassphrase(reason, needsCredentials, reasons) {
 if (typeof module !== "undefined") {
   module.exports = {
     parseNetworkStatus: parseNetworkStatus,
-    serverDomainFor: serverDomainFor,
     decimal: decimal,
     wifiIconFor: wifiIconFor,
     connectionIcon: connectionIcon,
@@ -479,10 +453,11 @@ if (typeof module !== "undefined") {
     wifiSectionTitle: wifiSectionTitle,
     requiresCredentials: requiresCredentials,
     canForgetNetwork: canForgetNetwork,
-    enterpriseProfileCheckScript: enterpriseProfileCheckScript,
+    panelConnects: panelConnects,
+    profileIsPersonal: profileIsPersonal,
+    legacyProfileFilter: legacyProfileFilter,
     legacyEnterpriseGuardScript: legacyEnterpriseGuardScript,
     parseGuardOutput: parseGuardOutput,
-    enterpriseConnectScript: enterpriseConnectScript,
     networkFailureReason: networkFailureReason,
     shouldRepromptPassphrase: shouldRepromptPassphrase
   }

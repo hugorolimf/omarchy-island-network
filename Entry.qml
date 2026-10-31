@@ -99,17 +99,14 @@ BarWidget {
   // server, and NetworkManager would auto-connect them before anyone opens
   // the panel. The guard (Model.legacyEnterpriseGuardScript) stops that as
   // soon as the plugin loads -- here, so it runs with or without the Kit --
-  // and again whenever the panel opens. The widget marks those networks.
-  property var legacySsids: []
+  // and again whenever the panel opens, and keeps trying every minute until
+  // it completes.
   property bool guardAgain: false
-  property var notifiedSsids: []
-  onLegacySsidsChanged: injectLegacy()
+  property var notifiedPaused: []
+  property var notifiedFailed: []
+  property bool notifiedUnchecked: false
   onOpenedChanged: if (opened === true) runGuard()
   Component.onCompleted: runGuard()
-
-  function injectLegacy() {
-    if (inner && "legacySsids" in inner) inner.legacySsids = legacySsids
-  }
 
   function runGuard() {
     if (guardProc.running) { guardAgain = true; return }
@@ -125,6 +122,9 @@ BarWidget {
     }
     onExited: function(exitCode) {
       if (exitCode !== 0) console.warn(root.moduleName + ": could not check the saved enterprise Wi-Fi profiles (" + exitCode + ")")
+      guardRetry.running = exitCode !== 0
+      if (exitCode === 2) root.notifyUnchecked()
+      if (exitCode === 0) root.notifiedUnchecked = false
       if (root.guardAgain) {
         root.guardAgain = false
         root.runGuard()
@@ -132,33 +132,48 @@ BarWidget {
     }
   }
 
+  Timer {
+    id: guardRetry
+    interval: 60000
+    repeat: false
+    onTriggered: root.runGuard()
+  }
+
+  function notifyUnchecked() {
+    if (notifiedUnchecked) return
+    notifiedUnchecked = true
+    notify(portuguese ? "Wi-Fi corporativo não verificado" : "Enterprise Wi-Fi not checked",
+      portuguese ? "Não foi possível ler os perfis salvos para pausar os que não conferem o servidor. Tentando de novo a cada minuto."
+                 : "The saved profiles could not be read to pause those that don't check the server. Trying again every minute.")
+  }
+
   // Says once per network what changed and how to get it back; a network
   // that could not be paused is named too, it still auto-connects.
   function guardFinished(result) {
-    legacySsids = result.paused.concat(result.failed)
-    var fresh = result.fresh.filter(function(ssid) { return notifiedSsids.indexOf(ssid) < 0 })
-    var failed = result.failed.filter(function(ssid) { return notifiedSsids.indexOf(ssid) < 0 })
-    notifiedSsids = notifiedSsids.concat(fresh, failed)
+    var fresh = result.fresh.filter(function(ssid) { return notifiedPaused.indexOf(ssid) < 0 })
+    var failed = result.failed.filter(function(ssid) { return notifiedFailed.indexOf(ssid) < 0 })
+    notifiedPaused = notifiedPaused.concat(fresh)
+    notifiedFailed = notifiedFailed.concat(failed)
     var pt = portuguese
     if (fresh.length > 0) {
       var down = result.down.filter(function(ssid) { return fresh.indexOf(ssid) >= 0 }).length > 0
       notify(pt ? "Wi-Fi corporativo: conexão automática pausada" : "Enterprise Wi-Fi: auto-connect paused",
         pt ? fresh.join(", ") + ": o perfil salvo não confere o servidor da rede, então não conecta mais sozinho"
              + (down ? " e a conexão atual foi encerrada" : "")
-             + ". Para voltar, escolha a rede no painel de rede e informe o servidor."
+             + ". Para voltar, configure a rede no nmtui com o certificado e o domínio do servidor."
            : fresh.join(", ") + ": the saved profile doesn't check the network's server, so it no longer connects on its own"
              + (down ? " and the current connection was closed" : "")
-             + ". To get it back, pick the network in the network panel and enter the server.")
+             + ". To get it back, set the network up in nmtui with the server's certificate and domain.")
     }
     if (failed.length > 0) {
       notify(pt ? "Wi-Fi corporativo sem proteção" : "Unprotected enterprise Wi-Fi",
-        pt ? failed.join(", ") + ": o perfil salvo não confere o servidor e não foi possível pausar a conexão automática. Escolha a rede no painel de rede e informe o servidor, ou esqueça a rede."
-           : failed.join(", ") + ": the saved profile doesn't check the server and its auto-connect could not be paused. Pick the network in the network panel and enter the server, or forget the network.")
+        pt ? failed.join(", ") + ": o perfil salvo não confere o servidor e não foi possível pausar a conexão automática. Configure a rede no nmtui com o certificado e o domínio do servidor, ou esqueça a rede."
+           : failed.join(", ") + ": the saved profile doesn't check the server and its auto-connect could not be paused. Set the network up in nmtui with the server's certificate and domain, or forget the network.")
     }
   }
 
   function notify(title, body) {
-    Quickshell.execDetached(["notify-send", "-a", "Island Network", "-i", "network-wireless", title, body])
+    Quickshell.execDetached(["notify-send", "-a", "Island Network", "-i", "network-wireless", "--", title, body])
   }
 
   Loader {
@@ -169,7 +184,6 @@ BarWidget {
     source: Qt.resolvedUrl(root.widgetFile)
     onLoaded: {
       root.injectInner()
-      root.injectLegacy()
     }
   }
 
